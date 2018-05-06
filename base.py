@@ -1,3 +1,8 @@
+"""Base classes for all estimators."""
+
+# Author: Gael Varoquaux <gael.varoquaux@normalesup.org>
+# License: BSD 3 clause
+
 import copy
 import warnings
 from collections import defaultdict
@@ -8,6 +13,8 @@ from .externals import six
 from .utils.fixes import signature
 from . import __version__
 
+
+##############################################################################
 def _first_and_last_element(arr):
     """Returns first and last element of numpy array or sparse matrix."""
     if isinstance(arr, np.ndarray) or hasattr(arr, 'data'):
@@ -21,6 +28,22 @@ def _first_and_last_element(arr):
 
 
 def clone(estimator, safe=True):
+    """Constructs a new estimator with the same parameters.
+
+    Clone does a deep copy of the model in an estimator
+    without actually copying attached data. It yields a new estimator
+    with the same parameters that has not been fit on any data.
+
+    Parameters
+    ----------
+    estimator : estimator object, or list, tuple or set of objects
+        The estimator or group of estimators to be cloned
+
+    safe : boolean, optional
+        If safe is false, clone will fall back to a deep copy on objects
+        that are not estimators.
+
+    """
     estimator_type = type(estimator)
     # XXX: not handling dictionaries
     if estimator_type in (list, tuple, set, frozenset):
@@ -99,9 +122,23 @@ def clone(estimator, safe=True):
 
 
 ###############################################################################
-
 def _pprint(params, offset=0, printer=repr):
+    """Pretty print the dictionary 'params'
 
+    Parameters
+    ----------
+    params : dict
+        The dictionary to pretty print
+
+    offset : int
+        The offset in characters to add at the begin of each line.
+
+    printer : callable
+        The function to convert entries to strings, typically
+        the builtin str or repr
+
+    """
+    # Do a multi-line justified repr:
     options = np.get_printoptions()
     np.set_printoptions(precision=5, threshold=64, edgeitems=2)
     params_list = list()
@@ -134,9 +171,18 @@ def _pprint(params, offset=0, printer=repr):
     lines = '\n'.join(l.rstrip(' ') for l in lines.split('\n'))
     return lines
 
-###############################################################################
 
+###############################################################################
 class BaseEstimator(object):
+    """Base class for all estimators in scikit-learn
+
+    Notes
+    -----
+    All estimators should specify all the parameters that can be set
+    at the class level in their ``__init__`` as explicit keyword
+    arguments (no ``*args`` or ``**kwargs``).
+    """
+
     @classmethod
     def _get_param_names(cls):
         """Get parameter names for the estimator"""
@@ -255,8 +301,8 @@ class BaseEstimator(object):
         except AttributeError:
             self.__dict__.update(state)
 
-###############################################################################
 
+###############################################################################
 class ClassifierMixin(object):
     """Mixin class for all classifiers in scikit-learn."""
     _estimator_type = "classifier"
@@ -290,7 +336,6 @@ class ClassifierMixin(object):
 
 
 ###############################################################################
-
 class RegressorMixin(object):
     """Mixin class for all regression estimators in scikit-learn."""
     _estimator_type = "regressor"
@@ -327,6 +372,187 @@ class RegressorMixin(object):
         return r2_score(y, self.predict(X), sample_weight=sample_weight,
                         multioutput='variance_weighted')
 
+
+###############################################################################
+class ClusterMixin(object):
+    """Mixin class for all cluster estimators in scikit-learn."""
+    _estimator_type = "clusterer"
+
+    def fit_predict(self, X, y=None):
+        """Performs clustering on X and returns cluster labels.
+
+        Parameters
+        ----------
+        X : ndarray, shape (n_samples, n_features)
+            Input data.
+
+        Returns
+        -------
+        y : ndarray, shape (n_samples,)
+            cluster labels
+        """
+        # non-optimized default implementation; override when a better
+        # method is possible for a given clustering algorithm
+        self.fit(X)
+        return self.labels_
+
+
+class BiclusterMixin(object):
+    """Mixin class for all bicluster estimators in scikit-learn"""
+
+    @property
+    def biclusters_(self):
+        """Convenient way to get row and column indicators together.
+
+        Returns the ``rows_`` and ``columns_`` members.
+        """
+        return self.rows_, self.columns_
+
+    def get_indices(self, i):
+        """Row and column indices of the i'th bicluster.
+
+        Only works if ``rows_`` and ``columns_`` attributes exist.
+
+        Parameters
+        ----------
+        i : int
+            The index of the cluster.
+
+        Returns
+        -------
+        row_ind : np.array, dtype=np.intp
+            Indices of rows in the dataset that belong to the bicluster.
+        col_ind : np.array, dtype=np.intp
+            Indices of columns in the dataset that belong to the bicluster.
+
+        """
+        rows = self.rows_[i]
+        columns = self.columns_[i]
+        return np.nonzero(rows)[0], np.nonzero(columns)[0]
+
+    def get_shape(self, i):
+        """Shape of the i'th bicluster.
+
+        Parameters
+        ----------
+        i : int
+            The index of the cluster.
+
+        Returns
+        -------
+        shape : (int, int)
+            Number of rows and columns (resp.) in the bicluster.
+        """
+        indices = self.get_indices(i)
+        return tuple(len(i) for i in indices)
+
+    def get_submatrix(self, i, data):
+        """Returns the submatrix corresponding to bicluster `i`.
+
+        Parameters
+        ----------
+        i : int
+            The index of the cluster.
+        data : array
+            The data.
+
+        Returns
+        -------
+        submatrix : array
+            The submatrix corresponding to bicluster i.
+
+        Notes
+        -----
+        Works with sparse matrices. Only works if ``rows_`` and
+        ``columns_`` attributes exist.
+        """
+        from .utils.validation import check_array
+        data = check_array(data, accept_sparse='csr')
+        row_ind, col_ind = self.get_indices(i)
+        return data[row_ind[:, np.newaxis], col_ind]
+
+
+###############################################################################
+class TransformerMixin(object):
+    """Mixin class for all transformers in scikit-learn."""
+
+    def fit_transform(self, X, y=None, **fit_params):
+        """Fit to data, then transform it.
+
+        Fits transformer to X and y with optional parameters fit_params
+        and returns a transformed version of X.
+
+        Parameters
+        ----------
+        X : numpy array of shape [n_samples, n_features]
+            Training set.
+
+        y : numpy array of shape [n_samples]
+            Target values.
+
+        Returns
+        -------
+        X_new : numpy array of shape [n_samples, n_features_new]
+            Transformed array.
+
+        """
+        # non-optimized default implementation; override when a better
+        # method is possible for a given clustering algorithm
+        if y is None:
+            # fit method of arity 1 (unsupervised transformation)
+            return self.fit(X, **fit_params).transform(X)
+        else:
+            # fit method of arity 2 (supervised transformation)
+            return self.fit(X, y, **fit_params).transform(X)
+
+
+class DensityMixin(object):
+    """Mixin class for all density estimators in scikit-learn."""
+    _estimator_type = "DensityEstimator"
+
+    def score(self, X, y=None):
+        """Returns the score of the model on the data X
+
+        Parameters
+        ----------
+        X : array-like, shape = (n_samples, n_features)
+
+        Returns
+        -------
+        score : float
+        """
+        pass
+
+
+class OutlierMixin(object):
+    """Mixin class for all outlier detection estimators in scikit-learn."""
+    _estimator_type = "outlier_detector"
+
+    def fit_predict(self, X, y=None):
+        """Performs outlier detection on X.
+
+        Returns -1 for outliers and 1 for inliers.
+
+        Parameters
+        ----------
+        X : ndarray, shape (n_samples, n_features)
+            Input data.
+
+        Returns
+        -------
+        y : ndarray, shape (n_samples,)
+            1 for inliers, -1 for outliers.
+        """
+        # override for transductive outlier detectors like LocalOulierFactor
+        return self.fit(X).predict(X)
+
+
+###############################################################################
+class MetaEstimatorMixin(object):
+    """Mixin class for all meta estimators in scikit-learn."""
+    # this is just a tag for the moment
+
+
 ###############################################################################
 
 def is_classifier(estimator):
@@ -344,6 +570,7 @@ def is_classifier(estimator):
     """
     return getattr(estimator, "_estimator_type", None) == "classifier"
 
+
 def is_regressor(estimator):
     """Returns True if the given estimator is (probably) a regressor.
 
@@ -358,6 +585,7 @@ def is_regressor(estimator):
         True if estimator is a regressor and False otherwise.
     """
     return getattr(estimator, "_estimator_type", None) == "regressor"
+
 
 def is_outlier_detector(estimator):
     """Returns True if the given estimator is (probably) an outlier detector.
